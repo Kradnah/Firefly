@@ -55,6 +55,7 @@ void DmaPusher::DispatchCalls() {
             gpu->FlushCommands();
             gpu->OnCommandListEnd();
         });
+        split.NoteUnknownMemoryWrite();
         split.Publish();
         return;
     }
@@ -461,9 +462,14 @@ void DmaPusher::CallMethod(u32 argument) {
         const auto engine_type = subchannel_type[dma_state.subchannel];
         const bool writer = engine_type == Engines::EngineTypes::KeplerCompute ||
                             engine_type == Engines::EngineTypes::MaxwellDMA;
+        // The 2D and inline-to-memory engines write guest memory where the front doesn't follow.
+        const bool memory_writer = engine_type == Engines::EngineTypes::Fermi2D ||
+                                   engine_type == Engines::EngineTypes::KeplerMemory;
         SCOPE_EXIT {
             if (writer) {
                 split.NoteWriter();
+            } else if (memory_writer) {
+                split.NoteUnknownMemoryWrite();
             }
         };
         if (split.Active()) {
@@ -520,9 +526,14 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
         const auto engine_type = subchannel_type[dma_state.subchannel];
         const bool writer = engine_type == Engines::EngineTypes::KeplerCompute ||
                             engine_type == Engines::EngineTypes::MaxwellDMA;
+        // The 2D and inline-to-memory engines write guest memory where the front doesn't follow.
+        const bool memory_writer = engine_type == Engines::EngineTypes::Fermi2D ||
+                                   engine_type == Engines::EngineTypes::KeplerMemory;
         SCOPE_EXIT {
             if (writer) {
                 split.NoteWriter();
+            } else if (memory_writer) {
+                split.NoteUnknownMemoryWrite();
             }
         };
         if (split.Active()) {

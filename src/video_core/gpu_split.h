@@ -10,6 +10,7 @@
 #include <memory>
 #include <thread>
 #include <type_traits>
+#include <vector>
 
 #include "common/common_types.h"
 
@@ -184,6 +185,17 @@ public:
     /// of it was still queued.
     bool WaitForSync();
 
+    /// Work that writes guest memory at [address, address + size) itself, not through the buffer
+    /// cache, was just sent: constant buffer updates, semaphore and report writes.
+    void NoteMemoryWrite(u64 address, u64 size);
+    /// Work that writes guest memory at addresses the front doesn't follow was just sent.
+    void NoteUnknownMemoryWrite() {
+        last_unknown_write_position = write_position;
+    }
+    /// Waits until the back executed the work sent so far that can write [address, address +
+    /// size) other than through the buffer cache (compute and copy work counts as such).
+    bool WaitForMemoryWrites(u64 address, u64 size, DrainSite site);
+
 private:
     friend struct GpuSplitTestAccess;
 
@@ -256,6 +268,15 @@ private:
     u64 write_position{};
     u64 last_writer_position{};
     u64 last_sync_position{};
+    u64 last_unknown_write_position{};
+    struct PendingWrite {
+        u64 begin;
+        u64 end;
+        u64 position; ///< write_position after the work that writes it
+    };
+    static constexpr size_t MaxPendingWrites = 256;
+    /// Writes NoteMemoryWrite saw, oldest first, until the back executes them.
+    std::vector<PendingWrite> pending_writes;
     u64 published_local{};
     u64 consumed_cache{};
     /// Words between publishes: small right after a drain, while the back has nothing to do.

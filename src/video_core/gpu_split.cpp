@@ -153,6 +153,8 @@ void GpuSplit::Stop() {
     write_position = 0;
     last_writer_position = 0;
     last_sync_position = 0;
+    last_unknown_write_position = 0;
+    pending_writes.clear();
     published_local = 0;
     consumed_cache = 0;
     publish_every = PublishEvery;
@@ -214,6 +216,7 @@ void GpuSplit::Publish() {
 void GpuSplit::Drain(DrainSite site) {
     consumed_cache = consumed.load(std::memory_order_acquire);
     if (consumed_cache == write_position && BackQuiet()) {
+        pending_writes.clear();
         return;
     }
     Publish();
@@ -226,6 +229,7 @@ void GpuSplit::Drain(DrainSite site) {
         consumed_cache = consumed.load(std::memory_order_acquire);
         if (consumed_cache == write_position) {
             if (BackQuiet()) {
+                pending_writes.clear();
                 publish_every = 8;
                 Nx2Profile::AddDrain(site, start);
                 return;
@@ -241,6 +245,48 @@ void GpuSplit::Drain(DrainSite site) {
 
 bool GpuSplit::WaitForWriters() {
     return WaitFor(std::min(last_writer_position, write_position), DrainSite::ListWriters);
+}
+
+void GpuSplit::NoteMemoryWrite(u64 address, u64 size) {
+    // Constant buffer updates come word by word: grow the last range while they continue it.
+    if (!pending_writes.empty()) {
+        PendingWrite& last = pending_writes.back();
+        if (address >= last.begin && address <= last.end) {
+            last.end = (std::max)(last.end, address + size);
+            last.position = write_position;
+            return;
+        }
+    }
+    if (pending_writes.size() == MaxPendingWrites) {
+        consumed_cache = consumed.load(std::memory_order_acquire);
+        std::erase_if(pending_writes, [this](const PendingWrite& write) {
+            return write.position <= consumed_cache;
+        });
+        if (pending_writes.size() == MaxPendingWrites) {
+            // Too many to follow: the newest of them counts for any address.
+            last_unknown_write_position =
+                (std::max)(last_unknown_write_position, pending_writes.back().position);
+            pending_writes.clear();
+        }
+    }
+    pending_writes.push_back({address, address + size, write_position});
+}
+
+bool GpuSplit::WaitForMemoryWrites(u64 address, u64 size, DrainSite site) {
+    u64 target = (std::max)(last_writer_position, last_unknown_write_position);
+    const u64 end = address + size;
+    for (const PendingWrite& write : pending_writes) {
+        if (write.begin < end && address < write.end) {
+            target = (std::max)(target, write.position);
+        }
+    }
+    const bool waited = WaitFor((std::min)(target, write_position), site);
+    if (!pending_writes.empty() && pending_writes.front().position <= consumed_cache) {
+        std::erase_if(pending_writes, [this](const PendingWrite& write) {
+            return write.position <= consumed_cache;
+        });
+    }
+    return waited;
 }
 
 bool GpuSplit::WaitForSync() {

@@ -101,6 +101,7 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
                     scheduler.Push(system.GPU(), submit_list->channel, std::move(submit_list->entries));
                 } else if (std::holds_alternative<GPUTickCommand>(next.data)) {
                     split.Defer([gpu = &system.GPU()] { gpu->TickWork(); });
+                    split.NoteUnknownMemoryWrite();
                 } else if (auto* run = std::get_if<RunCommand>(&next.data)) {
                     if (run->before_later_reads) {
                         // GPU memory maps unmap caches (UnmapMemory downloads): the back's state.
@@ -108,11 +109,13 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
                         split.Drain(VideoCommon::DrainSite::Map);
                     } else {
                         split.DeferFunction(std::move(run->func));
+                        split.NoteUnknownMemoryWrite();
                     }
                 } else if (const auto* flush = std::get_if<FlushRegionCommand>(&next.data)) {
                     split.Defer([rasterizer_ptr, addr = flush->addr, size = flush->size] {
                         rasterizer_ptr->FlushRegion(addr, size);
                     });
+                    split.NoteUnknownMemoryWrite();
                 } else if (const auto* invalidate = std::get_if<InvalidateRegionCommand>(&next.data)) {
                     split.Defer([rasterizer_ptr, addr = invalidate->addr, size = invalidate->size] {
                         rasterizer_ptr->OnCacheInvalidation(addr, size);

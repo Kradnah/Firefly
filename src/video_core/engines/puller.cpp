@@ -49,10 +49,17 @@ u32 ReadSemaphoreWord(DmaPusher& dma_pusher, GPUVAddr address) {
 
 // With the GPU thread split (gpu_split.h) the rasterizer belongs to the back thread: work that
 // only feeds it runs there in order; reads of what it wrote first wait for it (DrainBack).
+// The work may write guest memory (fences release query writes): `written` is the semaphore it
+// writes, or 0 for anywhere.
 template <typename Func>
-void OnBack(const Func& func) {
+void OnBack(const Func& func, GPUVAddr written = 0) {
     if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
         split.Defer(func);
+        if (written != 0) {
+            split.NoteMemoryWrite(written, 16);
+        } else {
+            split.NoteUnknownMemoryWrite();
+        }
     } else {
         func();
     }
@@ -237,7 +244,7 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
                                     : VideoCommon::QueryPropertiesFlags::HasTimeout;
         OnBack([rasterizer = dma_pusher.rasterizer, sequence_address, properties, payload] {
             rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload, properties, payload, 0);
-        });
+        }, sequence_address);
     } else if (g_nx2_ampere) {
         // Switch 2 waits on semaphores the CPU (or another channel) releases, e.g. once it has
         // written the commands this channel runs next: suspend the channel until the value is
@@ -311,7 +318,7 @@ void Puller::ProcessSemaphoreRelease(DmaPusher& dma_pusher) {
     OnBack([rasterizer = dma_pusher.rasterizer, sequence_address, payload] {
         rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload,
                           VideoCommon::QueryPropertiesFlags::IsAFence, payload, 0);
-    });
+    }, sequence_address);
 }
 
 void Puller::ProcessSemaphoreAcquire(DmaPusher& dma_pusher) {
@@ -340,7 +347,7 @@ void Puller::ProcessSemaphoreExecute(DmaPusher& dma_pusher, u32 argument) {
         OnBack([rasterizer = dma_pusher.rasterizer, address, payload] {
             rasterizer->Query(address, VideoCommon::QueryType::Payload,
                               VideoCommon::QueryPropertiesFlags::IsAFence, payload, 0);
-        });
+        }, address);
         return;
     }
     // Acquires: check once after flushing pending fences; never block the GPU thread on them.
