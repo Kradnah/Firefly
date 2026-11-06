@@ -252,6 +252,22 @@ TEST_CASE("Logged Pokopia SHF register pressure identifies the register shift op
     CHECK_FALSE(LowerToMaxwell(std::array{invalid, Exit}));
 }
 
+TEST_CASE("Logged Ocarina register SHF keeps high operands below the uniform mirrors",
+          "[video_core][ampere][logged_numeric]") {
+    // R240 as the low word; R228 as destination and shift amount.
+    for (const Instruction shift : {Instruction{{0xf0077219, 0x0000001b, 0x000012ef, 0x000fe400}},
+                                    Instruction{{0xffe47219, 0x000000e4, 0x00011e19, 0x000fe400}}}) {
+        const auto pressure = Shader::Ampere::PrepareRegisterPressure(shift, 216);
+        REQUIRE(pressure.valid);
+        for (const u32 bit : {16U, 24U, 32U, 64U}) {
+            const u32 reg = pressure.instruction.Bits(bit, 8);
+            CHECK((reg < 216 || reg == 255));
+        }
+        CHECK_FALSE(pressure.prefix.empty());
+        CHECK(pressure.prefix.size() == pressure.suffix.size());
+    }
+}
+
 TEST_CASE("Logged Kirby FMUL preserves high guest registers across uniform mirrors",
           "[video_core][ampere][logged_numeric][kirby]") {
     using Shader::Ampere::NativeRegisterCopy;

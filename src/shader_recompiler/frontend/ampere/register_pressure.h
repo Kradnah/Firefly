@@ -183,6 +183,18 @@ inline RegisterPressure PrepareRegisterPressure(const Instruction& input, u32 re
         operand(24);
         operand(64);
         break;
+    case 0x219: // U32 shifts: destination, low word, shift amount, high word
+        operand(16);
+        operand(24);
+        operand(32);
+        operand(64);
+        break;
+    case 0xa19: // the shift amount from a constant buffer
+    case 0xc19: // or a uniform register
+        operand(16);
+        operand(24);
+        operand(64);
+        break;
     case 0x225:
     case 0x227:
     case 0x625:
