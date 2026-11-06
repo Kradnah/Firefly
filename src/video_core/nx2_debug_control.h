@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -17,6 +19,25 @@
 /// them at the end of each presented frame, so every cache they touch is used from its owner.
 /// Without the server nothing is posted and the per-frame cost is one relaxed atomic load.
 namespace VideoCore::Nx2Debug {
+
+/// The switch's value, read from the environment on first use (-1: not read yet), so
+/// nx2_switches.txt, applied after static initialization, still sets it.
+[[nodiscard]] inline int SwitchValue(std::atomic<int>& value, const char* name,
+                                    int fallback = 0) {
+    int current = value.load(std::memory_order_relaxed);
+    if (current < 0) [[unlikely]] {
+        int unset = -1;
+        const char* env = std::getenv(name);
+        const int initial = env != nullptr ? std::atoi(env) : fallback;
+        value.compare_exchange_strong(unset, initial, std::memory_order_relaxed);
+        current = value.load(std::memory_order_relaxed);
+    }
+    return current;
+}
+
+/// EDEN_NX2_HOST_PACE: the host frame pacer (vk_host_pacer.h). 1 = on (default), 0 = only
+/// measure how long each frame was shown.
+inline std::atomic<int> g_host_pace{-1};
 
 struct CaptureRequest {
     u64 id;
