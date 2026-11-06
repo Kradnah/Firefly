@@ -382,6 +382,7 @@ public:
     Id mesh_payload_u32{};  ///< pointer type to one payload word
     Id mesh_attributes{};
     Id mesh_map{};
+    Id mesh_default_point_size{}; ///< PointSize the epilogue sets to 1 (point meshes without one)
     Id mesh_primitive_count{};
     Id mesh_shared_u32{};   ///< pointer type to one workgroup word
     Id mesh_primitive_indices{};
