@@ -7,10 +7,10 @@
 #pragma once
 
 #include <array>
-#include <optional>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <vector>
 #include <atomic>
@@ -77,10 +77,23 @@ using RingAnalogValue = Common::Input::AnalogStatus;
 using NfcValues = Common::Input::NfcStatus;
 using VibrationValues = std::array<Common::Input::VibrationStatus, max_emulated_controllers>;
 
+constexpr s32 HID_JOYSTICK_MAX = 0x7fff;
+
 struct AnalogSticks {
     AnalogStickState left{};
     AnalogStickState right{};
 };
+
+/// Input from the debug server (docs/nx2/debug-mcp.md, "Input"). Buttons are ORed into the real
+/// ones; a stick that is set replaces the real stick and its direction buttons.
+struct InjectedInput {
+    NpadButton buttons{};
+    std::optional<AnalogStickState> left;
+    std::optional<AnalogStickState> right;
+};
+
+/// Asked on every read of the npad buttons and sticks while installed: the input to apply now.
+using InputInjector = std::function<std::optional<InjectedInput>()>;
 
 struct ControllerColors {
     NpadControllerColor fullkey{};
@@ -335,11 +348,6 @@ public:
     /// Returns the latest status of button input for the hid::Npad service
     NpadButtonState GetNpadButtons() const;
 
-    /// Debug server input: buttons are ORed into the real ones, and each stick given replaces the
-    /// real one until the next call, whatever the player's mapping is.
-    void SetDebugInput(NpadButton buttons, std::optional<AnalogStickState> left,
-                       std::optional<AnalogStickState> right);
-
     /// Returns the latest status of button input for the debug pad service
     DebugPadButton GetDebugPadButtons() const;
 
@@ -348,6 +356,9 @@ public:
 
     /// Returns the latest status of trigger input from the mouse
     NpadGcTriggerState GetTriggers() const;
+
+    /// Installs the debug server's injector, or removes it when empty. Never changes mappings.
+    void SetInputInjector(InputInjector injector);
 
     /// Returns the latest status of motion input from the mouse
     MotionState GetMotions() const;
@@ -639,13 +650,14 @@ private:
     StickDevices virtual_stick_devices;
     ControllerMotionDevices virtual_motion_devices;
 
-    mutable std::mutex callback_mutex;
+    std::optional<InjectedInput> Injected() const;
 
-    mutable std::mutex debug_input_mutex;
-    NpadButton debug_buttons{};
-    std::optional<AnalogStickState> debug_left;
-    std::optional<AnalogStickState> debug_right;
+    mutable std::mutex callback_mutex;
     ::Common::unordered_map<int, ControllerUpdateCallback> callback_list;
+
+    mutable std::mutex injector_mutex;
+    InputInjector injector;
+    std::atomic<bool> has_injector{};
     int last_callback_key = 0;
 
     // Stores the current status of all controller input
