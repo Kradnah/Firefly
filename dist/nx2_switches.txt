@@ -9,7 +9,9 @@
 
 # --- Performance tuning defaults for Switch 2 ---
 # Offload GPU method/macro execution to the back thread (SPLIT=2 delivers up to +54% FPS alone).
-EDEN_NX2_SPLIT=2
+# Left unset, it is on with 8 or more usable CPUs and off below (faster on small CPUs);
+# =2 forces it on, =0 off.
+#EDEN_NX2_SPLIT=2
 
 # Batch GPU fence syncpoints to reduce host driver overhead and smooth frametimes.
 EDEN_NX2_FENCE_BATCH=1

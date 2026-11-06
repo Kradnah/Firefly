@@ -89,9 +89,21 @@ void GpuSplit::CheckOwner(const char* where) {
 GpuSplit GpuSplit::instance;
 
 void GpuSplit::MaybeStart(Core::System& system_) {
+    // On small CPUs the second GPU thread competes with the guest cores for the host's CPUs. In
+    // Ocarina of Time's Kakariko frames took 42.9 ms with the split and 35.3 ms without on four
+    // CPUs, 25.7 and 24.6 ms on six; from eight (4 cores, 8 threads: 28.2 and 28.8 ms) it pays
+    // off. EDEN_NX2_SPLIT still chooses.
     static const char mode = [] {
         const char* value = std::getenv("EDEN_NX2_SPLIT");
-        return value != nullptr ? value[0] : '2';
+        if (value != nullptr) {
+            return value[0];
+        }
+        if (Common::UsableCpuCount() < 8) {
+            LOG_INFO(HW_GPU, "GPU thread split: off, {} usable CPUs (EDEN_NX2_SPLIT=2 turns it on)",
+                     Common::UsableCpuCount());
+            return '0';
+        }
+        return '2';
     }();
     const bool wanted = mode == '1' || mode == '2';
     if (!wanted || !Tegra::g_nx2_ampere.load(std::memory_order_relaxed)) {
