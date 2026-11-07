@@ -1913,6 +1913,7 @@ private:
     // next vblank instead (title 4 ran at up to 160 fps, its timing and audio with it).
     Nx2PresentPacer m_present_pacer;
     u32 m_swap_word{};
+    u32 m_step_30fps_flag{~0U}; ///< Last value written to the 30 FPS step patch's word
 
     struct FrameTrace {
         Common::DkbFrameTrace::RateLimit rate;
@@ -1952,11 +1953,31 @@ private:
         if (mkw_dynamic) {
             swap_interval = 1;
         }
-        // The 30 FPS profiles: the game's step is doubled at load (or Dark's Dynamic FPS follows
-        // the frame time), so its frames are held to every other refresh at 60 Hz.
+        // The 30 FPS profiles hold the game's frames to every other refresh at 60 Hz, with its
+        // step held to 30 FPS by the built-in patch's word (or Dark's Dynamic FPS following the
+        // frame time). Not while a movie plays (a picture decoded in the last 0.5 s): its
+        // pictures follow the presents, so at 30 it ran at half speed against its audio.
         if (Settings::values.light_profile_active && process != nullptr &&
             process->GetProgramId() == Settings::OcarinaOfTimeProgramId) {
-            swap_interval = (std::max)(swap_interval, 2U);
+            const long long last_picture =
+                VideoCommon::Nx2Perf::g_last_video_decode_ns.load(std::memory_order_relaxed);
+            const bool movie =
+                last_picture != 0 &&
+                std::chrono::steady_clock::now().time_since_epoch().count() - last_picture <
+                    std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        std::chrono::milliseconds{500})
+                        .count();
+            if (!movie) {
+                swap_interval = (std::max)(swap_interval, 2U);
+            }
+            if (const u64 flag = process->Step30FpsFlagAddress(); flag != 0) {
+                const u32 value = movie ? 0 : 1;
+                if (value != m_step_30fps_flag) {
+                    m_step_30fps_flag = value;
+                    system.ApplicationMemory().Write32(flag, value);
+                    LOG_INFO(Service, "nx2:vi2 30 FPS step {}", movie ? "off (movie)" : "on");
+                }
+            }
         }
         if (forced_interval != 0) {
             swap_interval = forced_interval;
@@ -3138,6 +3159,11 @@ private:
             }
             lk.lock();
             m_decoded_frames += pictures.size();
+            if (!pictures.empty()) {
+                VideoCommon::Nx2Perf::g_last_video_decode_ns.store(
+                    std::chrono::steady_clock::now().time_since_epoch().count(),
+                    std::memory_order_relaxed);
+            }
             if (Nx2VideoTraceEnabled()) {
                 LOG_INFO(Service,
                          "nx2:vdec trace decode syncpoint={} codec={} open={} pts={} eos={} "

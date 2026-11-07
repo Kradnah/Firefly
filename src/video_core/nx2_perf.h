@@ -31,4 +31,8 @@ inline std::atomic<long long> g_host_refresh_ns{0};
 /// that is ~6 ms: each lands on a refresh with little wait (input lag) and evenly spaced.
 inline std::atomic<long long> g_host_phase_ns{-1};
 
+/// When nx2:vdec last decoded a video picture (steady clock, ns since its epoch), or 0. The 30 FPS
+/// profiles let a playing movie run at the game's own rate: its pictures follow the presents.
+inline std::atomic<long long> g_last_video_decode_ns{0};
+
 } // namespace VideoCommon::Nx2Perf

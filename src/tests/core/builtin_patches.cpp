@@ -387,9 +387,9 @@ TEST_CASE("Built-in 30 FPS step follows the performance profile, after Dynamic F
     Settings::values.light_profile_active = true;
     auto patched = manager.PatchNSO(nso, "main");
     CHECK(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
-    CHECK(Common::HexToString(std::span{patched}.subspan(DynamicRoutineOffset, 24)) ==
-          "2818201E8300001C6308211E0869231EC0035FD68988083D");
-    CHECK(WordAt(patched, DynamicRoutineOffset + 24) == 0);
+    CHECK(Common::HexToString(std::span{patched}.subspan(DynamicRoutineOffset, 40)) ==
+          "2818201ECA9200B04A0138914B0140B98B0000348300001C6308211E0869231EC0035FD68988083D");
+    CHECK(WordAt(patched, DynamicRoutineOffset + 40) == 0);
 
     // Dark's routine, when enabled, wins the shared call.
     Settings::values.disabled_addons[OcarinaTitleId] = {};

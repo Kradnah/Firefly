@@ -91,11 +91,15 @@ constexpr std::array DYNAMIC_FPS_RECORDS{
 
 // The 30 FPS profiles hold Ocarina of Time's frames to every other refresh. Its frame step
 // (s1 / s0 at the same call as Dark's; s1 times seconds is a step of that length) becomes at
-// least a 30 FPS frame's, so each frame advances exactly two 60 Hz steps and a scene the game
-// already runs at 30 keeps its own: fdiv s8, s1, s0; ldr s3, =1/30; fmul s3, s3, s1;
-// fmaxnm s8, s8, s3; ret. Dark's routine also clobbers s3.
-constexpr std::array<u8, 24> FIXED_30FPS_ROUTINE{
-    0x28, 0x18, 0x20, 0x1E, 0x83, 0x00, 0x00, 0x1C, 0x63, 0x08, 0x21, 0x1E,
+// least a 30 FPS frame's while the emulator sets the word at main+0x4E9FE00 (Dark's state, which
+// this patch excludes): each frame then advances exactly two 60 Hz steps, a scene the game
+// already runs at 30 keeps its own, and while a movie plays at 60 the word is 0 and the step is
+// the game's. fdiv s8, s1, s0; adrp x10, 0x4e9f000; add x10, x10, #0xe00; ldr w11, [x10];
+// cbz w11, ret; ldr s3, =1/30; fmul s3, s3, s1; fmaxnm s8, s8, s3; ret. Dark's routine also
+// clobbers x10, x11 and s3.
+constexpr std::array<u8, 40> FIXED_30FPS_ROUTINE{
+    0x28, 0x18, 0x20, 0x1E, 0xCA, 0x92, 0x00, 0xB0, 0x4A, 0x01, 0x38, 0x91, 0x4B, 0x01,
+    0x40, 0xB9, 0x8B, 0x00, 0x00, 0x34, 0x83, 0x00, 0x00, 0x1C, 0x63, 0x08, 0x21, 0x1E,
     0x08, 0x69, 0x23, 0x1E, 0xC0, 0x03, 0x5F, 0xD6, 0x89, 0x88, 0x08, 0x3D,
 };
 constexpr std::array FIXED_30FPS_RECORDS{
@@ -130,6 +134,8 @@ constexpr std::array BUILTIN_PATCHES{
         .module = "main",
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
         .records = FIXED_30FPS_RECORDS,
+        .state_offset = 0x4E9FE00,
+        .state_size = 16,
         .light_profile = true,
     },
 };

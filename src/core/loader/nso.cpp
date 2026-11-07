@@ -176,6 +176,20 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         pi_header = pm->PatchNSO(pi_header, name);
 
         std::copy(pi_header.begin() + sizeof(NSOHeader), pi_header.end(), patchable_section.data());
+
+        // The 30 FPS step patch (not Dark's routine at the same place) reads a word the
+        // emulator sets while it holds the game to 30 FPS (nx2:vi2's PaceToVblank).
+        constexpr u64 Step30Routine = 0x3C46200;
+        constexpr u64 Step30Flag = 0x4E9FE00;
+        constexpr u32 Step30FlagLoad = 0xB940014B; // ldr w11, [x10]
+        if (name == "main" && process.GetProgramId() == Settings::OcarinaOfTimeProgramId &&
+            Step30Routine + 16 <= patchable_section.size()) {
+            u32 word;
+            std::memcpy(&word, patchable_section.data() + Step30Routine + 12, sizeof(word));
+            process.SetStep30FpsFlagAddress(word == Step30FlagLoad
+                                                ? load_base + module_start + Step30Flag
+                                                : 0);
+        }
     }
 
     // Mario Kart World selects a 1- or 2-vblank frame mode in its main loop. Force its native

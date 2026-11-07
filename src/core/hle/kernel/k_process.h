@@ -121,6 +121,7 @@ private:
 
     std::atomic<s64> m_cpu_time{};
     std::atomic_bool m_mkw_dynamic_fps_patch_applied{};
+    std::atomic<u64> m_step_30fps_flag{}; ///< Guest address of the 30 FPS step patch's word, or 0
     std::atomic<s64> m_num_process_switches{};
     std::atomic<s64> m_num_thread_switches{};
     std::atomic<s64> m_num_fpu_switches{};
@@ -190,6 +191,16 @@ public:
 
     void SetMkwDynamicFpsPatchApplied(bool applied) {
         m_mkw_dynamic_fps_patch_applied.store(applied, std::memory_order_relaxed);
+    }
+
+    /// Where the built-in 30 FPS step patch reads whether to hold the game's step to 30 FPS (a
+    /// 32-bit word in guest memory), or 0 when the patch is not applied.
+    u64 Step30FpsFlagAddress() const {
+        return m_step_30fps_flag.load(std::memory_order_relaxed);
+    }
+
+    void SetStep30FpsFlagAddress(u64 address) {
+        m_step_30fps_flag.store(address, std::memory_order_relaxed);
     }
 
     u64 GetProcessId() const {
