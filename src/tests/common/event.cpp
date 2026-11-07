@@ -171,3 +171,41 @@ TEST_CASE("Event signalling across timed and untimed waits remains consumable", 
     CHECK(completed.load());
     CHECK_FALSE(event.WaitFor(0ns));
 }
+
+#ifdef _WIN32
+namespace {
+struct BlockingTimedWaits {
+    BlockingTimedWaits() {
+        Common::Event::SetBlockingTimedWaits(true);
+    }
+    ~BlockingTimedWaits() {
+        Common::Event::SetBlockingTimedWaits(false);
+    }
+};
+} // Anonymous namespace
+
+TEST_CASE("Blocking Event timed waits keep the timed wait contract", "[common][event]") {
+    const BlockingTimedWaits blocking;
+    Common::Event event;
+    CHECK_FALSE(event.WaitFor(0ns));
+    event.Set();
+    CHECK(event.WaitFor(0ns));
+    CHECK_FALSE(event.IsSet());
+    for (const auto timeout : {200us, 2000us}) {
+        const auto start = std::chrono::steady_clock::now();
+        CHECK_FALSE(event.WaitFor(timeout));
+        CHECK(std::chrono::steady_clock::now() - start >= timeout);
+    }
+    std::jthread setter([&] {
+        std::this_thread::sleep_for(5ms);
+        event.Set();
+    });
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(event.WaitFor(2s));
+    CHECK(std::chrono::steady_clock::now() - start < 1s);
+    setter.join();
+    event.Set();
+    event.Reset();
+    CHECK_FALSE(event.WaitFor(1ms));
+}
+#endif

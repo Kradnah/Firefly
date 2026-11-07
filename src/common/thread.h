@@ -20,10 +20,17 @@ namespace Common {
 
 class Event {
 public:
+#ifdef _WIN32
+    ~Event();
+#endif
+
     void Set() {
         std::scoped_lock lk{mutex};
         if (!is_set) {
             is_set = true;
+#ifdef _WIN32
+            WakeTimedWaiters();
+#endif
             condvar.notify_one();
         }
     }
@@ -56,10 +63,24 @@ public:
         return is_set;
     }
 
+    /// Windows: timed waits block on a high-resolution timer instead of MWAITX/UMWAIT, which
+    /// keep a logical CPU busy for the whole wait (Eglantine PR 538). Off by default: the timer's
+    /// ~0.5 ms granularity lengthens the host timing thread's short waits; the lighter
+    /// performance profiles turn it on to free a CPU on small machines.
+    static void SetBlockingTimedWaits(bool enabled);
+
 private:
+#ifdef _WIN32
+    void WakeTimedWaiters();
+    bool WaitForBlocking(std::chrono::nanoseconds time);
+#endif
+
     alignas(64) std::atomic<bool> is_set{false};
     std::condition_variable condvar;
     std::mutex mutex;
+#ifdef _WIN32
+    void* timed_wait_event{};
+#endif
 };
 
 class Barrier {

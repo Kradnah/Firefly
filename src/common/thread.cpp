@@ -821,6 +821,98 @@ u32 UsableCpuCount() {
     return count;
 }
 
+namespace {
+std::atomic_bool g_blocking_timed_waits{false};
+} // Anonymous namespace
+
+void Event::SetBlockingTimedWaits(bool enabled) {
+    g_blocking_timed_waits.store(enabled, std::memory_order_relaxed);
+}
+
+#ifdef _WIN32
+Event::~Event() {
+    if (timed_wait_event) {
+        CloseHandle(timed_wait_event);
+    }
+}
+
+/// The caller holds mutex.
+void Event::WakeTimedWaiters() {
+    if (timed_wait_event) {
+        SetEvent(timed_wait_event);
+    }
+}
+
+// From Eglantine PR 538: a per-thread high-resolution timer and a wake event that Set() signals.
+bool Event::WaitForBlocking(const std::chrono::nanoseconds time) {
+    using Clock = std::chrono::steady_clock;
+    std::unique_lock lk{mutex};
+    const auto now = Clock::now();
+    const auto deadline =
+        time > Clock::time_point::max() - now ? Clock::time_point::max() : now + time;
+    while (!is_set.load()) {
+        const auto remaining = deadline - Clock::now();
+        if (remaining <= Clock::duration::zero()) {
+            return false;
+        }
+        // Each waiting thread owns its timer, so concurrent waits cannot rearm each other's.
+        struct Timer {
+            Timer() {
+                handle = CreateWaitableTimerExW(nullptr, nullptr,
+                                                CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                                TIMER_MODIFY_STATE | SYNCHRONIZE);
+                if (!handle) {
+                    handle =
+                        CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_MODIFY_STATE | SYNCHRONIZE);
+                }
+            }
+            ~Timer() {
+                if (handle) {
+                    CloseHandle(handle);
+                }
+            }
+            HANDLE handle{};
+        };
+        static thread_local Timer timer;
+        if (!timed_wait_event) {
+            timed_wait_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        }
+        if (timed_wait_event) {
+            // Reset under the lock: a Set() after it signals the event before or during the wait.
+            ResetEvent(timed_wait_event);
+            using TimerTicks = std::chrono::duration<s64, std::ratio<1, 10'000'000>>;
+            LARGE_INTEGER due{};
+            due.QuadPart = -std::chrono::ceil<TimerTicks>(remaining).count();
+            const bool armed =
+                timer.handle &&
+                SetWaitableTimerEx(timer.handle, &due, 0, nullptr, nullptr, nullptr, 0);
+            const HANDLE handles[]{static_cast<HANDLE>(timed_wait_event), timer.handle};
+            const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(remaining);
+            const DWORD timeout =
+                static_cast<DWORD>((std::min<s64>)(milliseconds.count(), INFINITE - 1));
+            lk.unlock();
+            const DWORD result =
+                armed ? WaitForMultipleObjects(2, handles, FALSE, INFINITE)
+                      : WaitForSingleObject(static_cast<HANDLE>(timed_wait_event), timeout);
+            if (armed) {
+                CancelWaitableTimer(timer.handle);
+            }
+            lk.lock();
+            if (result != WAIT_FAILED) {
+                continue;
+            }
+        }
+        const auto fallback =
+            std::chrono::ceil<std::chrono::milliseconds>(deadline - Clock::now());
+        if (fallback > std::chrono::milliseconds::zero()) {
+            condvar.wait_for(lk, fallback, [this] { return is_set.load(); });
+        }
+    }
+    is_set = false;
+    return true;
+}
+#endif
+
 #ifdef ARCHITECTURE_x86_64
 // On Linux and UNIX systems, a futex would nominally be used to cover the costs
 // the idea is that it's intuitivelly cheaper to use a direct instruction as opposed to a full futex call
@@ -838,6 +930,9 @@ __attribute__((target("waitpkg,mwaitx")))
 #endif
 bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #ifdef _WIN32
+    if (g_blocking_timed_waits.load(std::memory_order_relaxed)) {
+        return WaitForBlocking(time);
+    }
     auto const& caps = Common::g_cpu_caps;
     const auto deadline = EventWaitDeadline(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -907,6 +1002,9 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #else
 bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #ifdef _WIN32
+    if (g_blocking_timed_waits.load(std::memory_order_relaxed)) {
+        return WaitForBlocking(time);
+    }
     auto const end = Common::g_wall_clock.GetTimeNS() + time;
     while (!is_set.load() && end > Common::g_wall_clock.GetTimeNS())
         Common::Windows::SleepForOneTick();
