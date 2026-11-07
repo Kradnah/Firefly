@@ -116,6 +116,12 @@ bool CanBlitToSwapchain(const vk::PhysicalDevice& physical_device, VkFormat form
     };
 }
 
+/// Present modes the host pacer can pace (frames are shown at refreshes).
+bool PacesPresentMode(VkPresentModeKHR mode) {
+    return mode == VK_PRESENT_MODE_FIFO_KHR || mode == VK_PRESENT_MODE_MAILBOX_KHR ||
+           mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+}
+
 } // Anonymous namespace
 
 PresentManager::PresentManager(const vk::Instance& instance_,
@@ -380,9 +386,12 @@ void PresentManager::PresentThread(std::stop_token token) {
             last_present_id = 0;
             CopyToSwapchain(frame);
             if (present_wait_enabled) {
+                // Only the modes the pacer can pace wait for their frames to be shown: with
+                // Immediate the waits time out on hybrid laptops, and the thread spun a core.
+                const bool wait_for_shown = PacesPresentMode(swapchain.PresentMode());
                 const auto submitted = std::chrono::steady_clock::now();
-                pacer.NoteSubmitted(last_present_id, submitted, held);
-                if (last_present_id != 0) {
+                pacer.NoteSubmitted(wait_for_shown ? last_present_id : 0, submitted, held);
+                if (wait_for_shown && last_present_id != 0) {
                     {
                         std::scoped_lock ql{wait_queue_mutex};
                         wait_queue.push_back({last_present_id, swapchain.Handle(), submitted});
@@ -402,11 +411,8 @@ void PresentManager::PresentThread(std::stop_token token) {
 bool PresentManager::PaceFrame(Frame* frame, std::stop_token token) {
     using Clock = std::chrono::steady_clock;
     pacer.NoteQueued(frame->queued_at);
-    const VkPresentModeKHR mode = swapchain.PresentMode();
     const bool allowed =
-        (mode == VK_PRESENT_MODE_FIFO_KHR || mode == VK_PRESENT_MODE_MAILBOX_KHR ||
-         mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR) &&
-        !Settings::values.frame_gen.GetValue() && Settings::values.use_speed_limit.GetValue() &&
+        PacesPresentMode(swapchain.PresentMode()) && !Settings::values.frame_gen.GetValue() && Settings::values.use_speed_limit.GetValue() &&
         Settings::values.current_speed_mode.GetValue() != Settings::SpeedMode::Turbo;
     pacer.Refresh(Clock::now(), allowed);
     if (const u64 want = pacer.Outstanding(); pacer.Pacing() && want != 0) {
@@ -493,11 +499,16 @@ void PresentManager::PresentWaitThread(std::stop_token token) {
             }
             item = wait_queue.front();
         }
+        const auto wait_start = std::chrono::steady_clock::now();
         const VkResult result =
             device.GetLogical().WaitForPresentKHR(item.swapchain, item.id, 4'000'000);
         const auto now = std::chrono::steady_clock::now();
         wl.unlock();
         if (result == VK_TIMEOUT && now - item.submitted < std::chrono::milliseconds{500}) {
+            // Some drivers time out at once instead of waiting: don't spin on them.
+            if (now - wait_start < std::chrono::milliseconds{1}) {
+                std::this_thread::sleep_for(std::chrono::milliseconds{2});
+            }
             continue;
         }
         {
