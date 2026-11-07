@@ -152,14 +152,18 @@ inline void Nx2ClearSemaphoreRegions() {
 // the GPU memory manager calls Nx2BackSparseWrite before each write, with the bytes it writes
 // (blocks nobody wrote that only get zeros need no memory: they read zero already).
 using Nx2SparseBackingHandler = std::function<void(u64 gpu_address, u64 size, const u8* data)>;
+using Nx2SparseQueryHandler = std::function<bool(u64 gpu_address, u64 size)>;
 inline std::recursive_mutex g_nx2_sparse_backing_mutex;
 inline Nx2SparseBackingHandler g_nx2_sparse_backing;
+inline Nx2SparseQueryHandler g_nx2_sparse_needs_backing;
 inline std::atomic<u64> g_nx2_sparse_low{~u64{0}};
 inline std::atomic<u64> g_nx2_sparse_high{0};
 
-inline void Nx2SetSparseBacking(Nx2SparseBackingHandler handler) {
+inline void Nx2SetSparseBacking(Nx2SparseBackingHandler handler,
+                                Nx2SparseQueryHandler needs_backing = {}) {
     std::scoped_lock lk{g_nx2_sparse_backing_mutex};
     g_nx2_sparse_backing = std::move(handler);
+    g_nx2_sparse_needs_backing = std::move(needs_backing);
     g_nx2_sparse_low.store(~u64{0});
     g_nx2_sparse_high.store(0);
 }
@@ -173,6 +177,20 @@ inline void Nx2AddSparseSpan(u64 gpu_address, u64 size) {
     while (gpu_address + size > high &&
            !g_nx2_sparse_high.compare_exchange_weak(high, gpu_address + size)) {
     }
+}
+
+/// True when a write over [gpu_address, +size) may first have nx2:gpu give a lazily backed block
+/// memory (a sparse or GPU-only region's block nothing wrote yet). That maps memory in the guest
+/// page table, whose lock can belong to a guest thread that is off its core while every core waits
+/// for a lock the writer holds: the texture cache's garbage collector deadlocked so, writing back
+/// an image with the cache locked while the cores waited for it in CPU reads.
+inline bool Nx2SparseWriteNeedsBacking(u64 gpu_address, u64 size) {
+    if (gpu_address + size <= g_nx2_sparse_low.load(std::memory_order_relaxed) ||
+        gpu_address >= g_nx2_sparse_high.load(std::memory_order_relaxed)) [[likely]] {
+        return false;
+    }
+    std::scoped_lock lk{g_nx2_sparse_backing_mutex};
+    return g_nx2_sparse_needs_backing && g_nx2_sparse_needs_backing(gpu_address, size);
 }
 
 inline void Nx2BackSparseWrite(u64 gpu_address, u64 size, const void* data) {

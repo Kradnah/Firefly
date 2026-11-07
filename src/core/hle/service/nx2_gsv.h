@@ -379,6 +379,9 @@ public:
             Tegra::Nx2SetSparseBacking(
                 [this](u64 gpu_address, u64 size, const u8* data) {
                     BackSparseWrite(gpu_address, size, data);
+                },
+                [this](u64 gpu_address, u64 size) {
+                    return SparseWriteNeedsBacking(gpu_address, size);
                 });
         }
     }
@@ -1052,6 +1055,31 @@ private:
                 return !pending;
             });
         }
+    }
+
+    // Whether a write over [gpu_address, +size) would make BackSparseWrite back a block (or wait
+    // for one being backed): Tegra::Nx2SparseWriteNeedsBacking.
+    bool SparseWriteNeedsBacking(u64 gpu_address, u64 size) {
+        const u64 end = gpu_address + size;
+        std::scoped_lock lk{m_region_mutex};
+        auto it = m_sparse_regions.upper_bound(gpu_address);
+        if (it != m_sparse_regions.begin()) {
+            --it;
+        }
+        for (; it != m_sparse_regions.end() && it->first < end; ++it) {
+            const auto& [start, region] = *it;
+            if (start + region.size <= gpu_address || region.tiles) {
+                continue;
+            }
+            const u64 first = ((std::max)(gpu_address, start) - start) / SparseBlockSize;
+            const u64 last = ((std::min)(end, start + region.size) - 1 - start) / SparseBlockSize;
+            for (u64 block = first; block <= last && block < region.blocks.size(); ++block) {
+                if (region.blocks[block] == BlockEmpty || region.blocks[block] == BlockPending) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // EDEN_NX2_SPARSE_LAZY=0 backs sparse regions whole, as before.

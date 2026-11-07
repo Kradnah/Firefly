@@ -164,6 +164,13 @@ void TextureCache<P>::RunGarbageCollector() {
             (!high_priority_mode && must_download)) {
             return false;
         }
+        // Writing it back would map memory for a lazily backed block with the cache locked, and
+        // that can wait for a guest thread the cores (waiting for this lock) can't run: keep it.
+        if (must_download &&
+            Tegra::Nx2SparseWriteNeedsBacking(image.gpu_addr, image.guest_size_bytes)) {
+            ++num_iterations; // costs the pass nothing: other images may still go
+            return false;
+        }
         if (must_download) {
             auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
             const auto copies = FullDownloadCopies(image.info);
