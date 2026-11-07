@@ -280,6 +280,9 @@ private:
     void FrontRunMacro(Core::System& system, VideoCommon::GpuSplit& split, FrontState& state);
     std::unique_ptr<FrontState> front;
     bool front_macros{}; ///< The front owns the macro code and bindings (the back skips them)
+    /// Programs rejected for their matrix multiplies. Later dispatches fail with the shader
+    /// cache's cached rejection instead, so they are recognised by address.
+    std::unordered_set<GPUVAddr> upscale_fallback_programs;
 
     bool DispatchNativeCompute(const NativeQmdScheduler::Descriptor& descriptor);
     void ProcessNativeReportSemaphore(u32 argument);
