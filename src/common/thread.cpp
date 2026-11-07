@@ -826,6 +826,10 @@ std::atomic_bool g_blocking_timed_waits{false};
 } // Anonymous namespace
 
 void Event::SetBlockingTimedWaits(bool enabled) {
+    // EDEN_NX2_BLOCKING_WAITS=0 or 1 overrides the performance profile's choice.
+    if (const char* forced = std::getenv("EDEN_NX2_BLOCKING_WAITS"); forced && *forced) {
+        enabled = *forced != '0';
+    }
     g_blocking_timed_waits.store(enabled, std::memory_order_relaxed);
 }
 
