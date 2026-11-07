@@ -86,6 +86,7 @@
 #include <QMimeData>
 #include <QPalette>
 #include <QProgressDialog>
+#include <QPushButton>
 #include <QScreen>
 #include <QShortcut>
 #include <QStatusBar>
@@ -529,6 +530,12 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     // to prevent the UI from blowing up.
     UpdateUITheme();
 
+    // A launch with a game or arguments (scripts, shortcuts) keeps the question for a plain start.
+    if (!UISettings::values.performance_profile_asked.GetValue() &&
+        QApplication::arguments().size() < 2) {
+        AskPerformanceProfile();
+    }
+
     if (QStringList args = QApplication::arguments(); args.size() >= 2) {
         QList<QByteArray> qba{};
         for (auto const& e : args)
@@ -559,6 +566,49 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                 LibraryAppletParameters(0x010000000000100Dull, Service::AM::AppletId::QLaunch));
         }
     }
+}
+
+void MainWindow::AskPerformanceProfile() {
+    using Settings::PerformanceProfile;
+    UISettings::values.performance_profile_asked = true;
+    const auto& device = Settings::values.vulkan_device;
+    const u32 index = device.GetValue(true);
+    const bool known = index < vk_device_records.size() &&
+                       vk_device_records[index].device_local_bytes != 0;
+    const auto recommended =
+        known ? Settings::RecommendedPerformanceProfile(
+                    vk_device_records[index].device_local_bytes,
+                    vk_device_records[index].integrated, Common::UsableCpuCount())
+              : PerformanceProfile::Fps60;
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(tr("Performance profile"));
+    const QString names[]{tr("60 FPS"), tr("30 FPS"), tr("Maximum performance")};
+    box.setText(
+        tr("How should the game run on this PC?\n\n"
+           "60 FPS: docked, full quality, for fast PCs.\n"
+           "30 FPS: docked in low-end mode, a steady 30 at normal speed, for mid-range PCs.\n"
+           "Maximum performance: the same in handheld mode, for weak GPUs and laptops.\n\n"
+           "Recommended for this PC: %1. You can change it later in Configure > Graphics.")
+            .arg(names[static_cast<u32>(recommended)]));
+    QPushButton* buttons[3]{};
+    for (u32 i = 0; i < 3; ++i) {
+        buttons[i] = box.addButton(names[i], QMessageBox::AcceptRole);
+    }
+    box.setDefaultButton(buttons[static_cast<u32>(recommended)]);
+    box.exec();
+    auto profile = recommended;
+    for (u32 i = 0; i < 3; ++i) {
+        if (box.clickedButton() == buttons[i]) {
+            profile = static_cast<PerformanceProfile>(i);
+        }
+    }
+    Settings::values.performance_profile.SetValue(profile);
+    config->SaveAllValues();
+    LOG_INFO(Frontend, "Performance profile chosen: {} (recommended {}, {} MiB VRAM, {} CPUs)",
+             Settings::CanonicalizeEnum(profile), Settings::CanonicalizeEnum(recommended),
+             known ? vk_device_records[index].device_local_bytes >> 20 : 0,
+             Common::UsableCpuCount());
 }
 
 MainWindow::~MainWindow() {
@@ -2004,6 +2054,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         QtCommon::system->ApplySettings();
         Settings::UpdateGPUAccuracy();
         LOG_INFO(Config, "Ocarina of Time starts at GPU accuracy Low (no per-game accuracy set)");
+    }
+    if (Settings::ApplyOcarinaOfTimeProfile(Settings::values, title_id)) {
+        QtCommon::system->ApplySettings();
+        LOG_INFO(Config, "Ocarina of Time starts with the {} performance profile",
+                 Settings::CanonicalizeEnum(Settings::values.performance_profile.GetValue()));
     }
     Settings::LogSettings();
 

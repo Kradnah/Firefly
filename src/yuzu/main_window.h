@@ -508,6 +508,8 @@ private:
     MultiplayerState* multiplayer_state = nullptr;
     bool use_recommended_mkw_settings = false;
     bool asked_recommended_mkw_settings = false;
+    /// First start: asks for a performance profile, the hardware's recommendation preselected.
+    void AskPerformanceProfile();
 
     GRenderWindow* render_window = nullptr;
     GameList* game_list = nullptr;

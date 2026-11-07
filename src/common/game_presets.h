@@ -3,6 +3,7 @@
 #pragma once
 
 #include "common/settings.h"
+#include "common/thread.h"
 
 namespace Settings {
 
@@ -45,6 +46,51 @@ inline bool ApplyOcarinaOfTimeDefaults(Values& settings, u64 program_id) {
     }
     settings.gpu_accuracy.SetGlobal(false);
     settings.gpu_accuracy.SetValue(GpuAccuracy::Low);
+    return true;
+}
+
+// The profile Ocarina of Time starts with on this hardware: a GPU with little memory gets the
+// lightest profile, one under 6 GiB or a CPU with fewer than 12 threads 30 FPS.
+inline PerformanceProfile RecommendedPerformanceProfile(u64 device_local_bytes, bool integrated,
+                                                        u32 cpus) {
+    constexpr u64 GiB = 1ULL << 30;
+    if (integrated || device_local_bytes < 3 * GiB + GiB / 2) {
+        return PerformanceProfile::MaxPerformance;
+    }
+    if (device_local_bytes < 6 * GiB || cpus < 12) {
+        return PerformanceProfile::Fps30;
+    }
+    return PerformanceProfile::Fps60;
+}
+
+// Applies the performance profile for the session when Ocarina of Time starts. 30 FPS: docked, in
+// low-end mode, frames held to 30 with the game's step doubled to match (or Dark's Dynamic FPS
+// when it is enabled), Mailbox instead of Immediate so the host pacer can space the frames, and
+// no polling waits. The lightest profile is the same in handheld mode. Settings the game's own
+// configuration chooses are kept; saved settings are not changed.
+inline bool ApplyOcarinaOfTimeProfile(Values& settings, u64 program_id) {
+    const auto profile = settings.performance_profile.GetValue();
+    const bool light =
+        program_id == OcarinaOfTimeProgramId && profile != PerformanceProfile::Fps60;
+    settings.light_profile_active = light;
+    Common::Event::SetBlockingTimedWaits(light);
+    if (!light) {
+        return false;
+    }
+    const auto session = [](auto& setting, auto value) {
+        if (!setting.UsingGlobal()) {
+            return;
+        }
+        setting.SetGlobal(false);
+        setting.SetValue(value);
+    };
+    session(settings.use_docked_mode, profile == PerformanceProfile::MaxPerformance
+                                          ? ConsoleMode::Handheld
+                                          : ConsoleMode::Docked);
+    session(settings.low_end_mode, true);
+    if (settings.vsync_mode.GetValue() == VSyncMode::Immediate) {
+        session(settings.vsync_mode, VSyncMode::Mailbox);
+    }
     return true;
 }
 

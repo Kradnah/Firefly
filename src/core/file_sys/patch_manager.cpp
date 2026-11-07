@@ -62,6 +62,8 @@ struct BuiltinPatch {
     size_t state_offset = 0;
     size_t state_size = 0;
     bool full_resolution{}; ///< Raises the game's resolution: off in low-end mode
+    /// Applied by the 30 FPS performance profiles instead of the Add-Ons list (not listed there)
+    bool light_profile{};
 };
 
 constexpr std::array<u8, 4> MAX_RESOLUTION_ORIGINAL{0xE8, 0x41, 0x00, 0x36};
@@ -87,6 +89,20 @@ constexpr std::array DYNAMIC_FPS_RECORDS{
     BuiltinPatchRecord{0x3C46200, DYNAMIC_FPS_ROUTINE, {}, true},
 };
 
+// The 30 FPS profiles hold Ocarina of Time's frames to every other refresh. Its frame step
+// (s1 / s0 at the same call as Dark's; s1 times seconds is a step of that length) becomes at
+// least a 30 FPS frame's, so each frame advances exactly two 60 Hz steps and a scene the game
+// already runs at 30 keeps its own: fdiv s8, s1, s0; ldr s3, =1/30; fmul s3, s3, s1;
+// fmaxnm s8, s8, s3; ret. Dark's routine also clobbers s3.
+constexpr std::array<u8, 24> FIXED_30FPS_ROUTINE{
+    0x28, 0x18, 0x20, 0x1E, 0x83, 0x00, 0x00, 0x1C, 0x63, 0x08, 0x21, 0x1E,
+    0x08, 0x69, 0x23, 0x1E, 0xC0, 0x03, 0x5F, 0xD6, 0x89, 0x88, 0x08, 0x3D,
+};
+constexpr std::array FIXED_30FPS_RECORDS{
+    BuiltinPatchRecord{0x6E6CC4, DYNAMIC_FPS_CALL, DYNAMIC_FPS_ORIGINAL},
+    BuiltinPatchRecord{0x3C46200, FIXED_30FPS_ROUTINE, {}, true},
+};
+
 constexpr std::array BUILTIN_PATCHES{
     // Ocarina of Time takes its "dynamic resolution disabled" path, so the 3D renders at full scale
     // instead of following the GPU-time controller down to its 480p floor.
@@ -106,6 +122,15 @@ constexpr std::array BUILTIN_PATCHES{
         .records = DYNAMIC_FPS_RECORDS,
         .state_offset = 0x4E9FE00,
         .state_size = 16,
+    },
+    // After Dark's Dynamic FPS: when it is enabled it patched the same call and this is skipped.
+    BuiltinPatch{
+        .name = "30 FPS step (built-in)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
+        .records = FIXED_30FPS_RECORDS,
+        .light_profile = true,
     },
 };
 
@@ -529,7 +554,11 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
         if (patch.title_id != title_id || patch.module != name) {
             continue;
         }
-        if (std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {
+        if (patch.light_profile && !Settings::values.light_profile_active) {
+            continue;
+        }
+        if (!patch.light_profile &&
+            std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {
             LOG_INFO(Loader, "    - Skipping \"{}\": disabled in Add-Ons", patch.name);
             continue;
         }
@@ -1173,7 +1202,7 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
     }
 
     for (const auto& patch : BUILTIN_PATCHES) {
-        if (patch.title_id != title_id) {
+        if (patch.title_id != title_id || patch.light_profile) {
             continue;
         }
         const auto patch_disabled =

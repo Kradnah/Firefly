@@ -58,12 +58,14 @@ namespace VkDeviceInfo {
 class Record {
 public:
     explicit Record(std::string_view name, const std::vector<VkPresentModeKHR>& vsync_modes,
-                    bool has_broken_compute);
+                    bool has_broken_compute, u64 device_local_bytes = 0, bool integrated = false);
     ~Record();
 
     const std::string name;
     const std::vector<VkPresentModeKHR> vsync_support;
     const bool has_broken_compute;
+    const u64 device_local_bytes; ///< Largest device-local memory heap
+    const bool integrated;
 };
 
 // TODO(crueter): Port some configure_graphics.cpp stuff

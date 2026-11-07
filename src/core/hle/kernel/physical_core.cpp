@@ -242,7 +242,9 @@ void PhysicalCore::Idle(KernelCore& kernel) {
         spin_us = 0;
 #else
         const KProcess* process = kernel.ApplicationProcess();
-        spin_us = process != nullptr && process->IsSwitch2() && Common::UsableCpuCount() >= 12
+        // The 30 FPS profiles are for small machines, where the polling cores cost the most.
+        spin_us = process != nullptr && process->IsSwitch2() && Common::UsableCpuCount() >= 12 &&
+                          !Settings::values.light_profile_active
                       ? 100
                       : 0;
 #endif

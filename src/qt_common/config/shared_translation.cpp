@@ -251,6 +251,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the DMA read mode.\nUnsafe is faster, while Safe is more stable and can fix issues in some games.\nDefault follows the GPU Accuracy setting."));
     INSERT(Settings, gpu_fence_behavior, tr("GPU Fence Behavior:"),
            tr("Controls the GPU fence synchronization behavior.\nImmediate is the fastest option, but can introduce some issues.\nBalanced offers better compatibility and may fix issues in some games.\nAccurate further improves compatibility at the cost of some performance.\nDefault follows the GPU Mode setting."));
+    INSERT(Settings, performance_profile, tr("Performance profile:"),
+           tr("For the tested game, applied when it starts.\n60 FPS: docked, full quality.\n"
+              "30 FPS: docked in low-end mode, frames held to 30 at normal speed, for mid-range "
+              "PCs.\nMaximum performance: the same in handheld mode, for weak GPUs and "
+              "laptops.\nThe game's own settings for these options still win."));
     INSERT(Settings, low_end_mode, tr("Low-end mode"),
            tr("Runs faster on weak hardware, with a softer image: a game's upscaling network is "
               "replaced by a plain upscale, and built-in full-resolution patches stay off so the "
@@ -450,6 +455,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
           PAIR(RendererBackend, OpenGL_SPIRV, tr("OpenGL SPIR-V (Experimental, AMD/Mesa Only)")),
 #endif
           PAIR(RendererBackend, Null, tr("Null"))}});
+    translations->insert({Settings::EnumMetadata<Settings::PerformanceProfile>::Index(),
+                          {
+                              PAIR(PerformanceProfile, Fps60, tr("60 FPS")),
+                              PAIR(PerformanceProfile, Fps30, tr("30 FPS")),
+                              PAIR(PerformanceProfile, MaxPerformance,
+                                   tr("Maximum performance")),
+                          }});
     translations->insert({Settings::EnumMetadata<Settings::GpuAccuracy>::Index(),
                           {
                               PAIR(GpuAccuracy, Low, tr("Fast")),

@@ -1924,6 +1924,12 @@ private:
         if (mkw_dynamic) {
             swap_interval = 1;
         }
+        // The 30 FPS profiles: the game's step is doubled at load (or Dark's Dynamic FPS follows
+        // the frame time), so its frames are held to every other refresh at 60 Hz.
+        if (Settings::values.light_profile_active && process != nullptr &&
+            process->GetProgramId() == Settings::OcarinaOfTimeProgramId) {
+            swap_interval = (std::max)(swap_interval, 2U);
+        }
         if (forced_interval != 0) {
             swap_interval = forced_interval;
         }

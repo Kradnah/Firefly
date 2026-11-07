@@ -110,6 +110,9 @@ struct Values {
                                                            true};
 
     Setting<bool> first_start{linkage, true, "firstStart", Category::Ui};
+    // The performance profile question was answered (MainWindow::AskPerformanceProfile).
+    Setting<bool> performance_profile_asked{linkage, false, "performanceProfileAsked",
+                                            Category::Ui};
     Setting<bool> pause_when_in_background{linkage,
                                            false,
                                            "pauseWhenInBackground",

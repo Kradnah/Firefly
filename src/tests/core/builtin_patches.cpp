@@ -371,3 +371,29 @@ TEST_CASE("Built-in Dynamic FPS leaves both records alone when a user mod change
     std::memcpy(expected.data() + offset, &mod_word, sizeof(mod_word));
     REQUIRE(context.Manager().PatchNSO(nso, "main") == expected);
 }
+
+TEST_CASE("Built-in 30 FPS step follows the performance profile, after Dynamic FPS",
+          "[patch_manager]") {
+    PatchManagerTestContext context;
+    const auto manager = context.Manager();
+    constexpr std::string_view Step30 = "30 FPS step (built-in)";
+    const auto patches = manager.GetPatches();
+    REQUIRE(std::ranges::find(patches, Step30, &FileSys::Patch::name) == patches.end());
+    const auto nso = MakeDynamicMain();
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{DynamicFps}};
+    REQUIRE(WordAt(manager.PatchNSO(nso, "main"), DynamicCallOffset) ==
+            DynamicOriginalInstruction);
+
+    Settings::values.light_profile_active = true;
+    auto patched = manager.PatchNSO(nso, "main");
+    CHECK(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
+    CHECK(Common::HexToString(std::span{patched}.subspan(DynamicRoutineOffset, 24)) ==
+          "2818201E8300001C6308211E0869231EC0035FD68988083D");
+    CHECK(WordAt(patched, DynamicRoutineOffset + 24) == 0);
+
+    // Dark's routine, when enabled, wins the shared call.
+    Settings::values.disabled_addons[OcarinaTitleId] = {};
+    patched = manager.PatchNSO(nso, "main");
+    CHECK(WordAt(patched, DynamicRoutineOffset + 116) == 0x3F83D70A);
+    Settings::values.light_profile_active = false;
+}

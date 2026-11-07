@@ -349,6 +349,11 @@ struct Values {
     SwitchableSetting<ResolutionSetup> resolution_setup{linkage, ResolutionSetup::Res1X,
                                                         "resolution_setup", Category::Renderer};
 
+    // Applied when Ocarina of Time starts (ApplyOcarinaOfTimeProfile): 60 FPS docked, 30 FPS
+    // docked in low-end mode, or the lightest, handheld in low-end mode at 30 FPS.
+    SwitchableSetting<PerformanceProfile> performance_profile{
+        linkage, PerformanceProfile::Fps60, "performance_profile", Category::Renderer};
+
     SwitchableSetting<VSyncMode, true> vsync_mode{linkage,
                                                   VSyncMode::Fifo,
                                                   "use_vsync",
@@ -529,6 +534,8 @@ struct Values {
                                                       true};
 
     GpuAccuracy current_gpu_accuracy{GpuAccuracy::High};
+    /// A 30 FPS performance profile is in effect for this session (ApplyOcarinaOfTimeProfile).
+    bool light_profile_active{};
 
     SwitchableSetting<DmaAccuracy, true> dma_accuracy{linkage,
                                                       DmaAccuracy::Default,
