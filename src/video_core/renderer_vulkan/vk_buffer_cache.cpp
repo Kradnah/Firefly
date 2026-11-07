@@ -28,6 +28,17 @@
 
 namespace Vulkan {
 namespace {
+void HostReadBarrier(vk::CommandBuffer cmdbuf) {
+    const VkMemoryBarrier barrier{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+    };
+    cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                           barrier);
+}
+
 VkBufferCopy MakeBufferCopy(const VideoCommon::BufferCopy& copy) {
     return VkBufferCopy{
         .srcOffset = copy.src_offset,
@@ -171,13 +182,21 @@ public:
     virtual ~QuadIndexBuffer() = default;
 
     void UpdateBuffer(u32 num_indices_) {
+        while (!retired_buffers.empty() && scheduler.IsFree(retired_buffers.front().first)) {
+            retired_buffers.erase(retired_buffers.begin());
+        }
         if (num_indices_ <= num_indices) {
             return;
         }
 
-        scheduler.Finish();
+        // Commands recorded so far may still use the old buffer: it stays until the GPU is past
+        // them. Waiting for the GPU here stalled the thread ~150 ms in the middle of a load.
+        if (buffer) {
+            retired_buffers.emplace_back(scheduler.CurrentTick(), std::move(buffer));
+        }
 
-        num_indices = num_indices_;
+        // Grown by at least half, so that a draw count creeping up doesn't redo this every time.
+        num_indices = (std::max)(num_indices_, num_indices + num_indices / 2);
         index_type = IndexTypeFromNumElements(device, num_indices);
 
         const u32 num_quads = GetQuadsNum(num_indices);
@@ -268,6 +287,7 @@ protected:
     StagingBufferPool& staging_pool;
 
     vk::Buffer buffer{};
+    std::vector<std::pair<u64, vk::Buffer>> retired_buffers; ///< GPU tick that frees each one
     MemoryCommit memory_commit{};
     VkIndexType index_type{};
     u32 num_indices = 0;
@@ -480,6 +500,12 @@ void BufferCacheRuntime::WaitSubmittedTick(u64 tick) {
 }
 
 void BufferCacheRuntime::Finish() {
+    scheduler.Finish();
+}
+
+void BufferCacheRuntime::FinishForHostRead() {
+    scheduler.RequestOutsideRenderPassOperationContext();
+    scheduler.Record(HostReadBarrier);
     scheduler.Finish();
 }
 

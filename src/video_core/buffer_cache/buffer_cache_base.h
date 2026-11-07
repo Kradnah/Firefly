@@ -184,6 +184,7 @@ public:
 
 template <class P>
 class BufferCache : public VideoCommon::ChannelSetupCaches<BufferCacheChannelInfo> {
+    friend struct BufferCacheTestAccess;
     // Page size for caching purposes.
     // This is unrelated to the CPU page size and it can be changed as it seems optimal.
 #ifdef YUZU_LEGACY
@@ -257,6 +258,13 @@ public:
     /// Cancels pending downloads over the range, so a fence can't write them over newer bytes.
     void ClearDownload(DAddr base_addr, u64 size);
 
+    /// CPU writes collected but not yet applied (SetPendingCpuWrites).
+    [[nodiscard]] Common::RangeSet<DAddr> PendingCpuWriteRanges();
+
+    /// Writes downloaded bytes to guest memory, except over `cpu_written`.
+    void WriteDownloadedMemory(const Common::RangeSet<DAddr>& cpu_written, DAddr device_addr,
+                               const u8* data, u64 size);
+
     bool OnCPUWrite(DAddr device_addr, u64 size);
 
     void DownloadMemory(DAddr device_addr, u64 size);
@@ -321,6 +329,18 @@ public:
                                                           ObtainBufferOperation post_op);
     void FlushCachedWrites();
 
+    /// Where the CPU writes into GPU-written memory that were collected but not applied yet
+    /// (WriteMemory) come from: downloads must not write the GPU's older copy over them.
+    using PendingCpuWrites = std::function<void(const std::function<void(DAddr, size_t)>&)>;
+    void SetPendingCpuWrites(PendingCpuWrites source) {
+        pending_cpu_writes = std::move(source);
+    }
+
+    /// Takes CPU writes about to be applied one by one out of the GPU-written ranges first, so
+    /// applying one doesn't download the GPU's copy over another (WriteMemory keeps the GPU data
+    /// on the pages it writes).
+    void ClaimCpuWrites(std::span<const std::pair<DAddr, u64>> ranges);
+
     /// Return true when there are uncommitted buffers to be downloaded
     [[nodiscard]] bool HasUncommittedFlushes() const noexcept;
 
@@ -361,6 +381,8 @@ public:
     Nx2ListRead Nx2ReadListCopy(DAddr device_addr, std::span<u8> out, bool past_sync);
     /// Front thread, the split drained: the command list page was flushed to guest memory.
     void Nx2NoteListSynced(DAddr page);
+
+    void Nx2FlushListPages(std::span<const DAddr> pages);
     /// CPU and inline writes: they reach guest memory, so a synced page stays synced, but its copy
     /// no longer holds the page.
     void Nx2NoteListHostWrite(DAddr device_addr, u64 size);
@@ -728,6 +750,7 @@ private:
     /// fence pops. A write to a range after a download was taken removes it from that download
     /// (and every other pending one): its bytes are older than the write.
     std::deque<Common::RangeSet<DAddr>> pending_download_ranges;
+    PendingCpuWrites pending_cpu_writes;
     std::optional<Async_Buffer> current_buffer;
 
     std::deque<Async_Buffer> async_buffers_death_ring;
