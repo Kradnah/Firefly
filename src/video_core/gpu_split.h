@@ -196,6 +196,27 @@ public:
     /// size) other than through the buffer cache (compute and copy work counts as such).
     bool WaitForMemoryWrites(u64 address, u64 size, DrainSite site);
 
+    /// The ring position of everything sent so far.
+    [[nodiscard]] u64 SentPosition() const {
+        return write_position;
+    }
+    /// Whether work sent after position `since` may write [address, address + size): compute
+    /// or copies, writes at addresses the front doesn't follow, or a noted write over the range.
+    /// A noted write the back already executed is in guest memory.
+    [[nodiscard]] bool MayBeWrittenSince(u64 since, u64 address, u64 size) const {
+        if (since > write_position || last_writer_position > since ||
+            last_unknown_write_position > since) {
+            return true;
+        }
+        const u64 end = address + size;
+        for (const PendingWrite& write : pending_writes) {
+            if (write.position > since && write.begin < end && address < write.end) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 private:
     friend struct GpuSplitTestAccess;
 
